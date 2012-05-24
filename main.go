@@ -13,12 +13,14 @@ import (
 
 func main() {
 	// semi-common params
-	id := flag.Int("id", 0, "Message ID")
+	id := flag.Uint64("id", 0, "Message ID")
 	tube := flag.String("tube", "default", "tube to use")
 	age := flag.Int("age", 60, "age in seconds")
 	port := flag.Int("port", 11300, "beanstalk port number")
 	text := flag.String("text", "", "message to put in tube")
 	host := flag.String("host", "localhost", "beanstalk server to use")
+	jobs := flag.Int("jobs", 1, "number of jobs - used with kick")
+	pri := flag.Uint64("pri", 0, "priority level")
 
 	// distinct args
 	showold := flag.Bool("showold", false, "Show tubes with old messages")
@@ -27,8 +29,12 @@ func main() {
 	peek := flag.Bool("peek", false, "Peek next item in tube")
 	put := flag.Bool("put", false, "Put text in tube")
 	ping := flag.Bool("ping", false, "Ping tube (put and get same item")
+	kick := flag.Bool("kick", false, "Kick job")
+	bury := flag.Bool("bury", false, "Bury job")
 
 	flag.Parse()
+
+	prio := uint32(*pri)
 
 	// make sure only one distinct arg was selected
 	argcount := 0
@@ -56,9 +62,17 @@ func main() {
 		argcount++
 	}
 
+	if *kick {
+		argcount++
+	}
+
+	if *bury {
+		argcount++
+	}
+
 	if argcount != 1 {
 		fmt.Println("Error: wrong number of runmodes selected.")
-		fmt.Println("Select one of showold, list, clear, peek, put, ping")
+		fmt.Println("Select one of showold, list, clear, peek, put, ping, kick, bury")
 		flag.PrintDefaults()
 		os.Exit(64)
 	}
@@ -73,19 +87,21 @@ func main() {
 	} else if *clear {
 
 	} else if *peek {
-
+		PeekReady(hostname, *tube)
 	} else if *put {
 
 	} else if *ping {
 		Ping(hostname, *tube)
+	} else if *kick {
+		Kick(hostname, *tube, *jobs)
+	} else if *bury {
+		Bury(hostname, *tube, *id, prio)
 	}
 
 	_ = id
 	_ = tube
 	_ = age
-	_ = port
 	_ = text
-	_ = host
 
 	os.Exit(70)
 }
@@ -98,6 +114,31 @@ func connect(hostname string) *beanstalk.Conn {
 	}
 
 	return c
+}
+
+// kick jobs in tube
+func Kick(hostname string, tube string, jobs int) {
+	c := connect(hostname)
+	c.Tube = beanstalk.Tube{c, tube}
+	n, err := c.Kick(jobs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error kicking jobs: %s\n", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "Kicked %d jobs from tube %s\n", n, tube)
+	os.Exit(0)
+}
+
+// bury job in tube
+func Bury(hostname string, tube string, job uint64, priority uint32) {
+	c := connect(hostname)
+	c.Tube = beanstalk.Tube{c, tube}
+	err := c.Bury(job, priority)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not bury job %d in tube %s\n", job, tube)
+		os.Exit(2)
+	}
+	os.Exit(0)
 }
 
 // show tubes older than X
@@ -114,6 +155,20 @@ func List(hostname string) {
 		fmt.Println(tubes[i])
 	}
 
+	os.Exit(0)
+}
+
+// Peek next in tube
+func PeekReady(hostname string, tube string) {
+	c := connect(hostname)
+	c.Tube = beanstalk.Tube{c, tube}
+	id, body, err := c.PeekReady()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not peek next in tube %s:\n", tube, err)
+		os.Exit(2)
+	}
+
+	fmt.Fprintf(os.Stdout, "ID: %d\nBody: %s\n", id, body)
 	os.Exit(0)
 }
 
